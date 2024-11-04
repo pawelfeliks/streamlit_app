@@ -26,5 +26,5 @@ An interactive Streamlit application for data upload, cleaning, analysis, visual
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/advanced-data-dashboard.git
-cd advanced-data-dashboard
+git clone https://github.com/pawelfeliks/streamlit_app.git
+
