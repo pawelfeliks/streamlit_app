@@ -1,307 +1,790 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from sklearn.cluster import KMeans
 from io import BytesIO
 from reportlab.pdfgen import canvas
+import base64
+import threading
+import time
+from datetime import datetime
 
-st.title("Advanced Data Dashboard")
+# NLP Libraries
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+import re
+import pandasql as ps  # For SQL-like queries on DataFrame
 
-# File Upload
-uploaded_file = st.file_uploader("Choose a CSV file", type="csv")
+# Ensure NLTK data is downloaded
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
 
-if uploaded_file is not None:
-    try:
-        df = pd.read_csv(uploaded_file)
-        st.subheader("Data Preview")
-        st.write(df.head())
+# Set page configuration
+st.set_page_config(
+    page_title="Advanced Data Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-        # Data Summary
-        st.subheader("Data Summary")
-        st.write(df.describe())
+# Initialize session state variables
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = 'Data Upload'
 
-        # Data Cleaning Section
-        st.subheader("Data Cleaning")
-        if st.checkbox("Show missing values summary"):
-            st.write(df.isna().sum())
-        if st.button("Fill missing values with mean"):
+if 'dummy_var' not in st.session_state:
+    st.session_state.dummy_var = 0  # Dummy variable to trigger rerun
+
+if 'df' not in st.session_state:
+    st.session_state.df = pd.DataFrame()
+
+# Define page functions mapping
+page_functions = {
+    'Data Upload': lambda: page1_data_upload(),
+    'Data Cleaning': lambda: page2_data_cleaning(),
+    'Data Analysis': lambda: page3_data_analysis(),
+    'Visualization': lambda: page4_visualization(),
+    'Predict Trends': lambda: page5_predict_trends(),
+    'Clustering': lambda: page6_clustering(),
+    'Custom Dashboard': lambda: page7_custom_dashboard(),
+    'NLP Query': lambda: page8_nlp_query(),
+    'Real-Time Data': lambda: page9_real_time_data(),
+    'Export Data': lambda: page10_export_data(),
+    'Help': lambda: page11_help()
+}
+
+# Sidebar navigation
+st.sidebar.title("Navigation")
+options = st.sidebar.radio("Go to", list(page_functions.keys()), index=list(page_functions.keys()).index(st.session_state.current_page))
+
+# Update current page based on sidebar selection
+st.session_state.current_page = options
+
+# Function to load data
+@st.cache_data
+def load_data(file):
+    if file.name.endswith('.csv'):
+        return pd.read_csv(file)
+    elif file.name.endswith('.xlsx'):
+        return pd.read_excel(file)
+    elif file.name.endswith('.parquet'):
+        return pd.read_parquet(file)
+    else:
+        st.error("Unsupported file format!")
+        return pd.DataFrame()
+
+# Data Sampling Function
+def sample_data(df, frac=0.1):
+    return df.sample(frac=frac)
+
+# Define functions for each page
+def page1_data_upload():
+    st.title("Step 1: Data Upload")
+    st.write("Supported file formats: CSV, Excel, Parquet")
+    uploaded_file = st.file_uploader(
+        "Choose a file",
+        type=["csv", "xlsx", "parquet"],
+        help="Upload a CSV, Excel, or Parquet file for analysis."
+    )
+
+    # Data Sampling Option
+    sample_option = st.checkbox("Sample Data for Large Files", value=False)
+    sample_fraction = st.slider(
+        "Select Sample Fraction",
+        0.01, 1.0, 0.1, 0.01
+    ) if sample_option else 1.0
+
+    if uploaded_file is not None:
+        try:
+            df = load_data(uploaded_file)
+            if sample_option and len(df) > 10000:
+                df = sample_data(df, frac=sample_fraction)
+                st.warning(
+                    f"Data has been sampled to {sample_fraction*100}% "
+                    "of the original size for performance."
+                )
+            st.success("File uploaded successfully!")
+            st.session_state.df = df
+            st.write(df.head())
+            if st.button("Next", key=f"next_{st.session_state.current_page}"):
+                st.session_state.current_page = 'Data Cleaning'
+                st.session_state.dummy_var += 1
+        except Exception as e:
+            st.error(f"An error occurred while reading the file: {e}")
+    else:
+        st.info("Please upload a dataset to proceed.")
+
+def page2_data_cleaning():
+    st.title("Step 2: Data Cleaning")
+    st.write("Identify and handle missing values.")
+    df = st.session_state.df
+
+    if df.empty:
+        st.warning("Please upload data in the 'Data Upload' section before proceeding.")
+        return
+
+    # Show missing values
+    if st.checkbox(
+        "Show missing values summary",
+        help="Check this box to see the summary of missing values in your dataset."
+    ):
+        st.write(df.isna().sum())
+
+    # Fill missing values
+    fill_method = st.selectbox(
+        "Select method to fill missing values",
+        ['Mean', 'Median', 'Mode', 'Constant Value']
+    )
+    if fill_method == 'Constant Value':
+        constant_value = st.number_input(
+            "Enter the constant value to fill missing values",
+            value=0
+        )
+    if st.button("Fill missing values"):
+        if fill_method == 'Mean':
             df.fillna(df.mean(), inplace=True)
-            st.success("Missing values filled with mean!")
+        elif fill_method == 'Median':
+            df.fillna(df.median(), inplace=True)
+        elif fill_method == 'Mode':
+            df.fillna(df.mode().iloc[0], inplace=True)
+        elif fill_method == 'Constant Value':
+            df.fillna(constant_value, inplace=True)
+        st.success(f"Missing values filled using {fill_method} method!")
+        st.session_state.df = df
 
-        # Interactive Filtering Section
-        st.subheader("Filter Data")
-        columns = df.columns.tolist()
-        selected_column = st.selectbox("Select column to filter by", columns)
-        unique_values = df[selected_column].unique()
-        selected_value = st.selectbox("Select value", unique_values)
-        filtered_df = df[df[selected_column] == selected_value]
-
-        # Numeric Filtering with Slider
-        numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
-        if numeric_columns:
-            selected_numeric_column = st.selectbox("Select a numeric column to filter", numeric_columns)
-            min_val, max_val = st.slider(f"Select range for {selected_numeric_column}",
-                                         float(df[selected_numeric_column].min()),
-                                         float(df[selected_numeric_column].max()),
-                                         (float(df[selected_numeric_column].min()), float(df[selected_numeric_column].max())))
-            filtered_df = filtered_df[(filtered_df[selected_numeric_column] >= min_val) & (filtered_df[selected_numeric_column] <= max_val)]
-            st.write(filtered_df)
-
-        # Sort Data Section
-        st.subheader("Sort Data")
-        sort_column = st.selectbox("Select column to sort by", columns)
-        sort_order = st.radio("Select sort order", ("Ascending", "Descending"))
-        sorted_df = filtered_df.sort_values(by=sort_column, ascending=(sort_order == "Ascending"))
-        st.write(sorted_df)
-
-        # Add/Edit/Delete Rows Section
-        st.subheader("Add/Edit/Delete Rows")
-        new_row_data = {}
-        st.write("### Add a new row")
-        for col in columns:
-            new_row_data[col] = st.text_input(f"Enter value for {col}")
-        if st.button("Add Row"):
-            new_row = pd.DataFrame([new_row_data])
-            df = pd.concat([df, new_row], ignore_index=True)
-            st.success("New row added!")
-            st.write(df.tail())
-
-        # Editable Table
-        st.subheader("Edit Data Table")
-        edited_df = st.data_editor(df, num_rows="dynamic")
-        if st.button("Save Changes"):
-            df = edited_df
-            st.success("Changes saved!")
-
-        # Pivot Table Section
-        st.subheader("Pivot Table")
-        pivot_index = st.multiselect("Select index for pivot table", columns)
-        pivot_columns = st.multiselect("Select columns for pivot table", columns)
-        pivot_values = st.multiselect("Select values for pivot table", columns)
-        pivot_aggfunc = st.selectbox("Select aggregation function", ['mean', 'sum', 'count', 'min', 'max', 'median', 'std'])
-
-        if pivot_values:
+    # Data type conversion
+    st.subheader("Data Type Conversion")
+    columns = df.columns.tolist()
+    if columns:
+        column_to_convert = st.selectbox(
+            "Select column to convert data type",
+            columns
+        )
+        new_data_type = st.selectbox(
+            "Select new data type",
+            ['int', 'float', 'str']
+        )
+        if st.button("Convert Data Type"):
             try:
-                pivot_table = pd.pivot_table(filtered_df, index=pivot_index, columns=pivot_columns, values=pivot_values, aggfunc=pivot_aggfunc)
-                st.write(pivot_table)
-                
-                # Option to plot pivot table
-                if st.checkbox("Plot Pivot Table"):
-                    plot_pivot_chart_type = st.selectbox("Select chart type for pivot table", ["Line Chart", "Bar Chart", "Heatmap"])
-                    if plot_pivot_chart_type == "Line Chart":
-                        st.line_chart(pivot_table)
-                    elif plot_pivot_chart_type == "Bar Chart":
-                        st.bar_chart(pivot_table)
-                    elif plot_pivot_chart_type == "Heatmap":
-                        fig, ax = plt.subplots()
-                        sns.heatmap(pivot_table, annot=True, cmap='coolwarm', ax=ax)
-                        st.pyplot(fig)
+                df[column_to_convert] = df[column_to_convert].astype(new_data_type)
+                st.success(
+                    f"Column '{column_to_convert}' converted to {new_data_type}!"
+                )
+                st.session_state.df = df
             except Exception as e:
-                st.error(f"An error occurred creating pivot table: {e}")
+                st.error(f"An error occurred during data type conversion: {e}")
 
-        # Correlation Heatmap
-        numeric_df = df.select_dtypes(include=['number'])
-        if not numeric_df.empty:
-            st.subheader("Correlation Heatmap")
-            fig, ax = plt.subplots()
-            sns.heatmap(numeric_df.corr(), annot=True, cmap='coolwarm', ax=ax)
-            st.pyplot(fig)
+    if st.button("Next", key=f"next_{st.session_state.current_page}"):
+        st.session_state.current_page = 'Data Analysis'
+        st.session_state.dummy_var += 1
 
-        # New Plot Data Section
-        st.subheader("Plot Data")
+def page3_data_analysis():
+    st.title("Step 3: Data Analysis")
+    st.write("Filter, sort, and summarize your data.")
+    df = st.session_state.df
 
-        # Select data source
-        data_source = st.selectbox("Select data source for plotting", ["Original Data", "Filtered Data", "Pivot Table"])
+    if df.empty:
+        st.warning("Please upload and clean data before proceeding.")
+        return
 
-        # Select chart type
-        all_chart_types = ["Line Chart", "Bar Chart", "Scatter Plot", "Histogram", "Box Plot", "Area Chart", "Pie Chart", "Heatmap", "Pairplot", "Violin Plot", "Bubble Chart", "Radar Chart", "Boxen Plot", "Swarm Plot", "Strip Plot", "Count Plot"]
-        chart_type = st.selectbox("Select chart type", all_chart_types)
-
-        # Depending on data source, get the data
-        if data_source == "Original Data":
-            plot_data = df
-        elif data_source == "Filtered Data":
-            plot_data = filtered_df
-        elif data_source == "Pivot Table":
-            if 'pivot_table' in locals():
-                plot_data = pivot_table.reset_index()
-            else:
-                st.error("No pivot table available for plotting.")
-                plot_data = None
+    # Interactive Filtering
+    st.subheader("Filter Data")
+    columns = df.columns.tolist()
+    if columns:
+        selected_column = st.selectbox(
+            "Select column to filter by",
+            columns,
+            help="Choose a column to filter the data."
+        )
+        unique_values = df[selected_column].dropna().unique()
+        selected_values = st.multiselect(
+            "Select values",
+            unique_values,
+            help="Select one or more values to filter the data."
+        )
+        if selected_values:
+            filtered_df = df[df[selected_column].isin(selected_values)]
         else:
-            plot_data = df
+            filtered_df = df.copy()
+        st.session_state.filtered_df = filtered_df
+    else:
+        st.error("No columns available in the dataset.")
 
-        if plot_data is not None:
-            columns_plot = plot_data.columns.tolist()
-            x_column = st.selectbox("Select x-axis column", columns_plot)
-            y_column = st.selectbox("Select y-axis column", columns_plot)
-            plot_button = st.button("Generate Plot")
+    # Numeric Filtering with Slider
+    numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
+    if numeric_columns:
+        st.subheader("Numeric Filtering")
+        selected_numeric_column = st.selectbox(
+            "Select a numeric column to filter",
+            numeric_columns,
+            help="Choose a numeric column for further filtering."
+        )
+        min_val = float(df[selected_numeric_column].min())
+        max_val = float(df[selected_numeric_column].max())
+        range_values = st.slider(
+            f"Select range for {selected_numeric_column}",
+            min_value=min_val,
+            max_value=max_val,
+            value=(min_val, max_val)
+        )
+        filtered_df = filtered_df[
+            (filtered_df[selected_numeric_column] >= range_values[0]) &
+            (filtered_df[selected_numeric_column] <= range_values[1])
+        ]
+        st.session_state.filtered_df = filtered_df
 
-            # Display the selected plot
-            if plot_button:
-                fig, ax = plt.subplots()
-                if chart_type == "Line Chart":
-                    if pd.api.types.is_numeric_dtype(plot_data[y_column]):
-                        plot_data.set_index(x_column)[y_column].plot.line(ax=ax)
-                        plt.xlabel(x_column)
-                        plt.ylabel(y_column)
-                    else:
-                        st.error("Y-axis must be numeric for Line Chart.")
-                elif chart_type == "Bar Chart":
-                    plot_data.plot.bar(x=x_column, y=y_column, ax=ax)
-                    plt.xticks(rotation=45)
-                elif chart_type == "Scatter Plot":
-                    if pd.api.types.is_numeric_dtype(plot_data[y_column]) and pd.api.types.is_numeric_dtype(plot_data[x_column]):
-                        ax.scatter(plot_data[x_column], plot_data[y_column])
-                        plt.xlabel(x_column)
-                        plt.ylabel(y_column)
-                    else:
-                        st.error("Both X and Y axes must be numeric for Scatter Plot.")
-                elif chart_type == "Histogram":
-                    if pd.api.types.is_numeric_dtype(plot_data[y_column]):
-                        ax.hist(plot_data[y_column], bins=20)
-                        plt.xlabel(y_column)
-                        plt.ylabel("Frequency")
-                    else:
-                        st.error("Y-axis must be numeric for Histogram.")
-                elif chart_type == "Box Plot":
-                    sns.boxplot(data=plot_data, x=x_column, y=y_column, ax=ax)
-                elif chart_type == "Area Chart":
-                    if pd.api.types.is_numeric_dtype(plot_data[y_column]):
-                        plot_data.set_index(x_column)[y_column].plot.area(ax=ax)
-                        plt.xlabel(x_column)
-                        plt.ylabel(y_column)
-                    else:
-                        st.error("Y-axis must be numeric for Area Chart.")
-                elif chart_type == "Pie Chart":
-                    if pd.api.types.is_numeric_dtype(plot_data[y_column]):
-                        plot_data.groupby(x_column)[y_column].sum().plot.pie(ax=ax, autopct="%1.1f%%")
-                        plt.ylabel("")
-                    else:
-                        st.error("Y-axis must be numeric for Pie Chart.")
-                elif chart_type == "Heatmap":
-                    if pd.api.types.is_numeric_dtype(plot_data[x_column]) and pd.api.types.is_numeric_dtype(plot_data[y_column]):
-                        heatmap_data = pd.pivot_table(plot_data, values=y_column, index=x_column, aggfunc='mean')
-                        sns.heatmap(heatmap_data, annot=True, cmap='coolwarm', ax=ax)
-                        plt.xlabel(x_column)
-                        plt.ylabel(y_column)
-                    else:
-                        st.error("Both X and Y axes must be numeric for Heatmap.")
-                elif chart_type == "Pairplot":
-                    sns.pairplot(plot_data, vars=[x_column, y_column])
-                    st.pyplot()  # Pairplot needs separate rendering
-                    st.stop()
-                elif chart_type == "Violin Plot":
-                    sns.violinplot(data=plot_data, x=x_column, y=y_column, ax=ax)
-                elif chart_type == "Bubble Chart":
-                    if pd.api.types.is_numeric_dtype(plot_data[y_column]) and pd.api.types.is_numeric_dtype(plot_data[x_column]):
-                        size_column = st.selectbox("Select size column for Bubble Chart", columns_plot)
-                        if pd.api.types.is_numeric_dtype(plot_data[size_column]):
-                            ax.scatter(plot_data[x_column], plot_data[y_column], s=plot_data[size_column]*10, alpha=0.5)
-                            plt.xlabel(x_column)
-                            plt.ylabel(y_column)
-                        else:
-                            st.error("Size column must be numeric for Bubble Chart.")
-                    else:
-                        st.error("Both X and Y axes must be numeric for Bubble Chart.")
-                elif chart_type == "Radar Chart":
-                    categories = st.multiselect("Select categories for Radar Chart", columns_plot)
-                    if categories:
-                        data = plot_data[categories]
-                        if all([pd.api.types.is_numeric_dtype(data[col]) for col in data.columns]):
-                            labels = data.columns
-                            num_vars = len(labels)
-                            angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
-                            angles += angles[:1]
-                            values = data.mean().tolist()
-                            values += values[:1]
+    # Data Sorting
+    st.subheader("Sort Data")
+    sort_column = st.selectbox(
+        "Select column to sort by",
+        columns
+    )
+    sort_order = st.radio("Select sort order", ("Ascending", "Descending"))
+    filtered_df = filtered_df.sort_values(
+        by=sort_column,
+        ascending=(sort_order == "Ascending")
+    )
+    st.session_state.filtered_df = filtered_df
+    st.write(filtered_df)
 
-                            fig = plt.figure(figsize=(6,6))
-                            ax = fig.add_subplot(111, polar=True)
-                            ax.plot(angles, values, 'o-', linewidth=2)
-                            ax.fill(angles, values, alpha=0.25)
-                            ax.set_thetagrids(np.degrees(angles[:-1]), labels)
-                            plt.title("Radar Chart")
-                        else:
-                            st.error("All selected categories must be numeric for Radar Chart.")
-                    else:
-                        st.error("Please select at least one category for Radar Chart.")
-                elif chart_type == "Boxen Plot":
-                    sns.boxenplot(data=plot_data, x=x_column, y=y_column, ax=ax)
-                elif chart_type == "Swarm Plot":
-                    sns.swarmplot(data=plot_data, x=x_column, y=y_column, ax=ax)
-                elif chart_type == "Strip Plot":
-                    sns.stripplot(data=plot_data, x=x_column, y=y_column, ax=ax)
-                elif chart_type == "Count Plot":
-                    sns.countplot(data=plot_data, x=x_column, ax=ax)
-                else:
-                    st.error("Invalid chart type selected.")
-                st.pyplot(fig)
+    # Data Summary
+    st.subheader("Data Summary")
+    if st.button(
+        "Show Summary",
+        key='show_summary',
+        help="Click to see statistical summary of the filtered data."
+    ):
+        st.write(filtered_df.describe())
 
-        # Trend Prediction Section
-        st.subheader("Predict Trends")
-        if "Date" in df.columns and selected_numeric_column in df.columns:
+    if st.button("Next", key=f"next_{st.session_state.current_page}"):
+        st.session_state.current_page = 'Visualization'
+        st.session_state.dummy_var += 1
+
+def page4_visualization():
+    st.title("Step 4: Data Visualization")
+    st.write("Create interactive charts to visualize your data.")
+    df = st.session_state.df
+
+    if df.empty:
+        st.warning("Please upload and prepare data before proceeding.")
+        return
+
+    # Select data source
+    data_source = st.selectbox(
+        "Select data source for plotting",
+        ["Original Data", "Filtered Data"],
+        help="Choose which data to visualize."
+    )
+    st.session_state['data_source'] = data_source
+
+    # Select chart type
+    chart_types = [
+        "Line Chart", "Bar Chart", "Scatter Plot", "Histogram",
+        "Box Plot", "Area Chart", "Pie Chart", "Heatmap", "Pairplot"
+    ]
+    chart_type = st.selectbox(
+        "Select chart type",
+        chart_types,
+        help="Choose the type of chart to create."
+    )
+    st.session_state['chart_type'] = chart_type
+
+    # Get data based on selection
+    if data_source == "Original Data":
+        plot_data = df.copy()
+    else:
+        plot_data = st.session_state.get('filtered_df', df)
+
+    # Select columns for plotting
+    columns_plot = plot_data.columns.tolist()
+    if columns_plot:
+        x_column = st.selectbox("Select x-axis column", columns_plot)
+        y_column = st.selectbox("Select y-axis column", columns_plot)
+        st.session_state['x_column'] = x_column
+        st.session_state['y_column'] = y_column
+
+        # Generate Plot
+        if st.button("Generate Plot"):
             try:
-                date_column = pd.to_datetime(df['Date'], errors='coerce')
-                df['Date_ordinal'] = date_column.apply(lambda x: x.toordinal() if pd.notnull(x) else np.nan)
-                df = df.dropna(subset=['Date_ordinal'])
+                if chart_type == "Line Chart":
+                    fig = px.line(
+                        plot_data,
+                        x=x_column,
+                        y=y_column,
+                        title=f"{chart_type} of {y_column} vs {x_column}"
+                    )
+                elif chart_type == "Bar Chart":
+                    fig = px.bar(
+                        plot_data,
+                        x=x_column,
+                        y=y_column,
+                        title=f"{chart_type} of {y_column} vs {x_column}"
+                    )
+                elif chart_type == "Scatter Plot":
+                    fig = px.scatter(
+                        plot_data,
+                        x=x_column,
+                        y=y_column,
+                        title=f"{chart_type} of {y_column} vs {x_column}"
+                    )
+                elif chart_type == "Histogram":
+                    fig = px.histogram(
+                        plot_data,
+                        x=y_column,
+                        nbins=20,
+                        title=f"{chart_type} of {y_column}"
+                    )
+                elif chart_type == "Box Plot":
+                    fig = px.box(
+                        plot_data,
+                        x=x_column,
+                        y=y_column,
+                        title=f"{chart_type} of {y_column} by {x_column}"
+                    )
+                elif chart_type == "Area Chart":
+                    fig = px.area(
+                        plot_data,
+                        x=x_column,
+                        y=y_column,
+                        title=f"{chart_type} of {y_column} vs {x_column}"
+                    )
+                elif chart_type == "Pie Chart":
+                    fig = px.pie(
+                        plot_data,
+                        names=x_column,
+                        values=y_column,
+                        title=f"{chart_type} of {y_column} by {x_column}"
+                    )
+                elif chart_type == "Heatmap":
+                    fig = px.density_heatmap(
+                        plot_data,
+                        x=x_column,
+                        y=y_column,
+                        title=f"{chart_type} of {y_column} vs {x_column}"
+                    )
+                elif chart_type == "Pairplot":
+                    fig = px.scatter_matrix(
+                        plot_data.select_dtypes(include=[np.number])
+                    )
+                else:
+                    st.error("Unsupported chart type selected.")
+                    fig = None
+
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"An error occurred while generating the plot: {e}")
+
+        # Advanced Visualization Options
+        st.subheader("Advanced Visualization")
+        if st.checkbox("Show Correlation Heatmap"):
+            numeric_df = plot_data.select_dtypes(include=['number'])
+            if not numeric_df.empty:
+                corr = numeric_df.corr()
+                fig = px.imshow(corr, text_auto=True, title="Correlation Heatmap")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.error("No numeric data available for correlation heatmap.")
+    else:
+        st.error("No columns available for plotting.")
+
+    if st.button("Next", key=f"next_{st.session_state.current_page}"):
+        st.session_state.current_page = 'Predict Trends'
+        st.session_state.dummy_var += 1
+
+def page5_predict_trends():
+    st.title("Step 5: Predict Trends")
+    st.write("Use linear regression to predict future trends.")
+    df = st.session_state.df
+
+    if df.empty:
+        st.warning("Please upload and prepare data before proceeding.")
+        return
+
+    numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
+    if "Date" in df.columns and not df['Date'].isnull().all():
+        selected_numeric_column = st.selectbox(
+            "Select numeric column for prediction",
+            numeric_columns
+        )
+        try:
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            df.dropna(subset=['Date', selected_numeric_column], inplace=True)
+            df.sort_values('Date', inplace=True)
+
+            if df.empty:
+                st.error("No data available after cleaning. Please check your data.")
+            else:
+                df['Date_ordinal'] = df['Date'].map(pd.Timestamp.toordinal)
 
                 model = LinearRegression()
-                X = np.array(df['Date_ordinal']).reshape(-1, 1)
+                X = df[['Date_ordinal']]
                 y = df[selected_numeric_column]
                 model.fit(X, y)
 
                 future_dates = pd.date_range(df['Date'].max(), periods=30)
-                future_ordinal = future_dates.to_series().apply(lambda x: x.toordinal()).values.reshape(-1, 1)
+                future_ordinal = future_dates.map(
+                    pd.Timestamp.toordinal
+                ).values.reshape(-1, 1)
                 predictions = model.predict(future_ordinal)
 
-                plt.plot(df['Date'], df[selected_numeric_column], label="Actual")
-                plt.plot(future_dates, predictions, label="Prediction", linestyle="--")
-                plt.legend()
-                st.pyplot()
-            except Exception as e:
-                st.error(f"An error occurred during trend prediction: {e}")
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=df['Date'],
+                        y=y,
+                        mode='lines',
+                        name='Actual'
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=future_dates,
+                        y=predictions,
+                        mode='lines',
+                        name='Prediction',
+                        line=dict(dash='dash')
+                    )
+                )
+                fig.update_layout(
+                    title="Trend Prediction",
+                    xaxis_title="Date",
+                    yaxis_title=selected_numeric_column
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"An error occurred during trend prediction: {e}")
+    else:
+        st.error("The dataset does not contain a valid 'Date' column.")
 
-        # Clustering Section
-        st.subheader("Customer Segmentation using K-Means Clustering")
-        num_clusters = st.slider("Select number of clusters", 2, 10, 3)
-        kmeans = KMeans(n_clusters=num_clusters)
-        numeric_data = df.select_dtypes(include=['number']).dropna()
-        if not numeric_data.empty:
-            kmeans.fit(numeric_data)
-            df['Cluster'] = kmeans.labels_
+    if st.button("Next", key=f"next_{st.session_state.current_page}"):
+        st.session_state.current_page = 'Clustering'
+        st.session_state.dummy_var += 1
+
+def page6_clustering():
+    st.title("Step 6: Clustering")
+    st.write("Segment your data into clusters.")
+    df = st.session_state.df
+
+    if df.empty:
+        st.warning("Please upload and prepare data before proceeding.")
+        return
+
+    num_clusters = st.slider(
+        "Select number of clusters",
+        2, 10, 3,
+        help="Choose the number of clusters for K-Means."
+    )
+    numeric_data = df.select_dtypes(include=['number']).dropna()
+    if not numeric_data.empty:
+        try:
+            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+            clusters = kmeans.fit_predict(numeric_data)
+            df['Cluster'] = clusters
             st.write(df)
+            st.session_state.df = df
 
-        # Export Data Section
-        st.subheader("Export Data")
-        if st.button("Export Filtered Data to CSV"):
-            csv = filtered_df.to_csv(index=False).encode('utf-8')
-            st.download_button("Download CSV", csv, "filtered_data.csv", "text/csv")
+            # Visualize Clusters
+            if len(numeric_data.columns) >= 2:
+                x_col, y_col = numeric_data.columns[:2]
+                fig = px.scatter(
+                    df,
+                    x=x_col,
+                    y=y_col,
+                    color='Cluster',
+                    title="Cluster Visualization"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Not enough numeric columns to visualize clusters.")
+        except Exception as e:
+            st.error(f"An error occurred during clustering: {e}")
+    else:
+        st.error("No numeric data available for clustering.")
 
-        if 'pivot_table' in locals():
-            if st.button("Export Pivot Table to CSV"):
-                pivot_csv = pivot_table.to_csv().encode('utf-8')
-                st.download_button("Download Pivot Table CSV", pivot_csv, "pivot_table.csv", "text/csv")
+    if st.button("Next", key=f"next_{st.session_state.current_page}"):
+        st.session_state.current_page = 'Custom Dashboard'
+        st.session_state.dummy_var += 1
 
-        # Export Charts to PDF
-        if st.button("Export Summary Report to PDF"):
+def page7_custom_dashboard():
+    st.title("Step 7: Custom Dashboard")
+    st.write("Create and save your own dashboard configurations.")
+    df = st.session_state.df
+
+    if df.empty:
+        st.warning("Please upload and prepare data before proceeding.")
+        return
+
+    # Check if visualization parameters are in session_state
+    required_params = ['data_source', 'chart_type', 'x_column', 'y_column']
+    missing_params = [
+        param for param in required_params if param not in st.session_state
+    ]
+
+    if missing_params:
+        st.info("Please set up your visualization parameters in the Visualization step.")
+    else:
+        # Retrieve parameters from session_state
+        data_source = st.session_state['data_source']
+        chart_type = st.session_state['chart_type']
+        x_column = st.session_state['x_column']
+        y_column = st.session_state['y_column']
+
+        # Save current configuration
+        dashboard_name = st.text_input("Enter a name for your dashboard")
+        if st.button("Save Dashboard"):
+            config = {
+                'data_source': data_source,
+                'chart_type': chart_type,
+                'x_column': x_column,
+                'y_column': y_column
+            }
+            st.session_state[f'dashboard_{dashboard_name}'] = config
+            st.success(f"Dashboard '{dashboard_name}' saved!")
+
+        # Load saved configuration
+        saved_dashboards = [
+            key.replace('dashboard_', '')
+            for key in st.session_state.keys()
+            if key.startswith('dashboard_')
+        ]
+        if saved_dashboards:
+            selected_dashboard = st.selectbox(
+                "Load a saved dashboard",
+                saved_dashboards
+            )
+            if st.button("Load Dashboard"):
+                config = st.session_state[f'dashboard_{selected_dashboard}']
+                data_source = config['data_source']
+                chart_type = config['chart_type']
+                x_column = config['x_column']
+                y_column = config['y_column']
+                st.success(f"Dashboard '{selected_dashboard}' loaded!")
+
+                # Recreate the plot
+                if data_source == "Original Data":
+                    plot_data = df.copy()
+                else:
+                    plot_data = st.session_state.get('filtered_df', df)
+                try:
+                    if chart_type == "Line Chart":
+                        fig = px.line(plot_data, x=x_column, y=y_column)
+                    elif chart_type == "Bar Chart":
+                        fig = px.bar(plot_data, x=x_column, y=y_column)
+                    # Add other chart types as necessary
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"An error occurred while loading the dashboard: {e}")
+        else:
+            st.info("No dashboards saved yet.")
+
+    if st.button("Next", key=f"next_{st.session_state.current_page}"):
+        st.session_state.current_page = 'NLP Query'
+        st.session_state.dummy_var += 1
+
+def page8_nlp_query():
+    st.title("Step 8: NLP Query")
+    st.write("Query your data using natural language.")
+    df = st.session_state.df
+
+    if df.empty:
+        st.warning("Please upload and prepare data before proceeding.")
+        return
+
+    user_query = st.text_input(
+        "Enter your query",
+        help="Example: 'Show me the total sales by region where sales > 1000'"
+    )
+    if st.button("Run Query"):
+        try:
+            # Basic NLP processing to convert natural language to SQL-like query
+            def nlp_to_sql(query, df_columns):
+                # Simple keyword mapping
+                query = query.lower()
+                select_clause = re.search(r'show me (.*) where', query)
+                where_clause = re.search(r'where (.*)', query)
+                select_cols = select_clause.group(1).strip() if select_clause else '*'
+                where_condition = where_clause.group(1).strip() if where_clause else ''
+                # Build SQL query
+                sql_query = f"SELECT {select_cols} FROM df"
+                if where_condition:
+                    sql_query += f" WHERE {where_condition}"
+                return sql_query
+
+            sql_query = nlp_to_sql(user_query, df.columns)
+            st.write(f"Generated SQL Query: `{sql_query}`")
+            result = ps.sqldf(sql_query, locals())
+            st.write(result)
+        except Exception as e:
+            st.error(f"An error occurred while processing the query: {e}")
+
+    if st.button("Next", key=f"next_{st.session_state.current_page}"):
+        st.session_state.current_page = 'Real-Time Data'
+        st.session_state.dummy_var += 1
+
+def page9_real_time_data():
+    st.title("Step 9: Real-Time Data Updates")
+    st.write("Analyze streaming data in real-time.")
+    df = st.session_state.df.copy()
+
+    if df.empty:
+        st.warning("Please upload and prepare data before proceeding.")
+        return
+
+    # Check if 'Date' column exists and is valid
+    if "Date" not in df.columns or df['Date'].isnull().all():
+        st.error("The dataset does not contain a valid 'Date' column.")
+        return
+
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    df.dropna(subset=['Date'], inplace=True)
+    df.sort_values('Date', inplace=True)
+    numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
+
+    if not numeric_columns:
+        st.error("No numeric columns available for real-time analysis.")
+        return
+
+    selected_numeric_column = st.selectbox(
+        "Select numeric column for real-time analysis",
+        numeric_columns
+    )
+
+    # Simulate real-time data updates
+    if st.button("Start Real-Time Analysis"):
+        placeholder = st.empty()
+        df_rt = df.copy()
+
+        for i in range(20):  # Update 20 times
+            # Simulate new data
+            new_row = df_rt.iloc[-1:].copy()
+            new_row['Date'] = new_row['Date'] + pd.Timedelta(minutes=1)
+            new_row[selected_numeric_column] = new_row[selected_numeric_column] + np.random.randn()
+            df_rt = pd.concat([df_rt, new_row], ignore_index=True)
+
+            # Update the chart
+            fig = px.line(
+                df_rt,
+                x='Date',
+                y=selected_numeric_column,
+                title="Real-Time Data"
+            )
+            placeholder.plotly_chart(fig, use_container_width=True)
+
+            time.sleep(1)  # Wait for 1 second
+
+
+def page10_export_data():
+    st.title("Step 10: Export Data")
+    st.write("Download your data and reports.")
+    df = st.session_state.df
+
+    if df.empty:
+        st.warning("Please upload and prepare data before proceeding.")
+        return
+
+    # Export Filtered Data
+    if st.button("Export Filtered Data to CSV"):
+        csv = st.session_state.get('filtered_df', df).to_csv(index=False).encode('utf-8')
+        b64 = base64.b64encode(csv).decode()
+        href = f'<a href="data:file/csv;base64,{b64}" download="filtered_data.csv">Download CSV File</a>'
+        st.markdown(href, unsafe_allow_html=True)
+
+    # Export Data to Excel
+    if st.button("Export Data to Excel"):
+        excel_buffer = BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False)
+        b64 = base64.b64encode(excel_buffer.getvalue()).decode()
+        href = f'<a href="data:application/vnd.ms-excel;base64,{b64}" download="data.xlsx">Download Excel File</a>'
+        st.markdown(href, unsafe_allow_html=True)
+
+    # Export Charts as Images
+    st.write(
+        "To save charts, right-click on the chart and select 'Save image as...'. "
+        "Alternatively, you can export charts to PDF below."
+    )
+
+    # Generate PDF Report
+    if st.button("Generate PDF Report"):
+        try:
             pdf_output = BytesIO()
             c = canvas.Canvas(pdf_output)
             c.setFont("Helvetica", 12)
             c.drawString(200, 800, "Summary Report")
-            c.drawString(50, 780, "Data Summary")
-            text = c.beginText(50, 760)
-            text.setFont("Helvetica", 10)
+            c.setFont("Helvetica", 10)
+            text = c.beginText(50, 780)
             for line in df.describe().to_string().split('\n'):
                 text.textLine(line)
             c.drawText(text)
             c.save()
-            st.download_button("Download PDF Report", data=pdf_output.getvalue(), file_name="summary_report.pdf", mime="application/pdf")
+            b64 = base64.b64encode(pdf_output.getvalue()).decode()
+            href = (
+                f'<a href="data:application/pdf;base64,{b64}" '
+                'download="summary_report.pdf">Download PDF Report</a>'
+            )
+            st.markdown(href, unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"An error occurred while generating the PDF report: {e}")
 
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
+    if st.button("Next", key=f"next_{st.session_state.current_page}"):
+        st.session_state.current_page = 'Help'
+        st.session_state.dummy_var += 1
+
+def page11_help():
+    st.title("Step 11: Help and Documentation")
+    st.write("Guidance on how to use the dashboard.")
+
+    # Interactive Tutorials and Documentation
+    st.markdown("""
+    **How to Use This Dashboard**
+
+    - **Step 1: Data Upload**: Start by uploading your dataset in CSV, Excel, or Parquet format.
+    - **Step 2: Data Cleaning**: Identify and handle missing values, and convert data types if necessary.
+    - **Step 3: Data Analysis**: Filter and sort your data to focus on what's important.
+    - **Step 4: Visualization**: Create interactive charts to visualize trends and patterns.
+    - **Step 5: Predict Trends**: Use linear regression to forecast future values.
+    - **Step 6: Clustering**: Segment your data into clusters for deeper insights.
+    - **Step 7: Custom Dashboard**: Save and load your dashboard configurations.
+    - **Step 8: NLP Query**: Query your data using natural language sentences.
+    - **Step 9: Real-Time Data**: Simulate and analyze streaming data in real-time.
+    - **Step 10: Export Data**: Download your filtered data, charts, and reports.
+    - **Step 11: Help**: Access guidance and FAQs.
+
+    **Frequently Asked Questions**
+
+    - **Q**: What file formats are supported?
+      **A**: CSV, Excel, and Parquet files are supported.
+
+    - **Q**: How do I handle missing values?
+      **A**: Go to the 'Data Cleaning' section to fill or remove missing values.
+
+    - **Q**: Can I save my analysis?
+      **A**: Yes, use the 'Custom Dashboard' section to save and load configurations.
+
+    **Need more help?** Contact support at [support@example.com](mailto:support@example.com).
+    """)
+
+    st.success("You have completed all the steps!")
+
+# Main execution
+missing_steps = []
+if st.session_state.current_page == 'Data Cleaning' and st.session_state.df.empty:
+    missing_steps.append("Data Upload")
+elif st.session_state.current_page == 'Data Analysis' and st.session_state.df.empty:
+    missing_steps.append("Data Upload and Data Cleaning")
+elif st.session_state.current_page == 'Visualization' and st.session_state.df.empty:
+    missing_steps.append("Data Upload")
+elif st.session_state.current_page == 'Custom Dashboard' and st.session_state.df.empty:
+    missing_steps.append("Data Upload and Visualization")
+
+if missing_steps:
+    st.warning(
+        f"Please complete the following steps before accessing "
+        f"'{st.session_state.current_page}': {', '.join(missing_steps)}."
+    )
 else:
-    st.write("Waiting on file upload...")
+    # Call the appropriate page function
+    page_functions[st.session_state.current_page]()
