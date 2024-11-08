@@ -690,37 +690,62 @@ def page9_real_time_data():
             time.sleep(1)  # Wait for 1 second
 
 
-def page10_export_data():
-    st.title("Step 10: Export Data")
-    st.write("Download your data and reports.")
-    df = st.session_state.df
+# def page10_export_data():
+#     st.title("Step 10: Export Data")
+#     st.write("Download your data and reports.")
+#     df = st.session_state.df
 
-    if df.empty:
-        st.warning("Please upload and prepare data before proceeding.")
-        return
+#     if df.empty:
+#         st.warning("Please upload and prepare data before proceeding.")
+#         return
 
-    # Export Filtered Data to CSV
-    csv = st.session_state.get('filtered_df', df).to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Download Filtered Data as CSV",
-        data=csv,
-        file_name='filtered_data.csv',
-        mime='text/csv',
-    )
+#     # Export Filtered Data
+#     if st.button("Export Filtered Data to CSV"):
+#         csv = st.session_state.get('filtered_df', df).to_csv(index=False).encode('utf-8')
+#         b64 = base64.b64encode(csv).decode()
+#         href = f'<a href="data:file/csv;base64,{b64}" download="filtered_data.csv">Download CSV File</a>'
+#         st.markdown(href, unsafe_allow_html=True)
 
-    # Export Data to Excel
-    excel_buffer = BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-    st.download_button(
-        label="Download Data as Excel",
-        data=excel_buffer.getvalue(),
-        file_name='data.xlsx',
-        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    )
+#     # Export Data to Excel
+#     if st.button("Export Data to Excel"):
+#         excel_buffer = BytesIO()
+#         with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+#             df.to_excel(writer, index=False)
+#         b64 = base64.b64encode(excel_buffer.getvalue()).decode()
+#         href = f'<a href="data:application/vnd.ms-excel;base64,{b64}" download="data.xlsx">Download Excel File</a>'
+#         st.markdown(href, unsafe_allow_html=True)
 
-    # Inform users about the removal of PDF generation
-    st.info("PDF report generation is currently unavailable.")
+#     # Export Charts as Images
+#     st.write(
+#         "To save charts, right-click on the chart and select 'Save image as...'. "
+#         "Alternatively, you can export charts to PDF below."
+#     )
+
+#     # Generate PDF Report
+#     if st.button("Generate PDF Report"):
+#         try:
+#             pdf_output = BytesIO()
+#             c = canvas.Canvas(pdf_output)
+#             c.setFont("Helvetica", 12)
+#             c.drawString(200, 800, "Summary Report")
+#             c.setFont("Helvetica", 10)
+#             text = c.beginText(50, 780)
+#             for line in df.describe().to_string().split('\n'):
+#                 text.textLine(line)
+#             c.drawText(text)
+#             c.save()
+#             b64 = base64.b64encode(pdf_output.getvalue()).decode()
+#             href = (
+#                 f'<a href="data:application/pdf;base64,{b64}" '
+#                 'download="summary_report.pdf">Download PDF Report</a>'
+#             )
+#             st.markdown(href, unsafe_allow_html=True)
+#         except Exception as e:
+#             st.error(f"An error occurred while generating the PDF report: {e}")
+
+#     if st.button("Next", key=f"next_{st.session_state.current_page}"):
+#         st.session_state.current_page = 'Help'
+#         st.session_state.dummy_var += 1
 
 def page11_help():
     st.title("Step 11: Help and Documentation")
