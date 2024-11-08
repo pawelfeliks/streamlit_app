@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from sklearn.linear_model import LinearRegression
 from sklearn.cluster import KMeans
 from io import BytesIO
-from reportlab.pdfgen import canvas
 import base64
 import threading
 import time
