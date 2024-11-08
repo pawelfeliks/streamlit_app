@@ -587,7 +587,7 @@ def page7_custom_dashboard():
 def page8_nlp_query():
     st.title("Step 8: NLP Query")
     st.write("Query your data using natural language.")
-    df = st.session_state.df
+    df = st.session_state.df.copy()
 
     if df.empty:
         st.warning("Please upload and prepare data before proceeding.")
@@ -595,27 +595,40 @@ def page8_nlp_query():
 
     user_query = st.text_input(
         "Enter your query",
-        help="Example: 'Show me the total sales by region where sales > 1000'"
+        help="Example: 'Show me total sales where region is Europe and sales > 1000'"
     )
+
     if st.button("Run Query"):
         try:
-            # Basic NLP processing to convert natural language to SQL-like query
-            def nlp_to_sql(query, df_columns):
-                # Simple keyword mapping
+            # Basic NLP processing to convert natural language to pandas query
+            def nlp_to_pandas_query(query, df_columns):
                 query = query.lower()
-                select_clause = re.search(r'show me (.*) where', query)
-                where_clause = re.search(r'where (.*)', query)
-                select_cols = select_clause.group(1).strip() if select_clause else '*'
-                where_condition = where_clause.group(1).strip() if where_clause else ''
-                # Build SQL query
-                sql_query = f"SELECT {select_cols} FROM df"
-                if where_condition:
-                    sql_query += f" WHERE {where_condition}"
-                return sql_query
+                # Extract conditions after 'where'
+                where_match = re.search(r'where (.*)', query)
+                if where_match:
+                    conditions = where_match.group(1)
+                    # Replace natural language operators with pandas operators
+                    conditions = conditions.replace(" and ", " & ")
+                    conditions = conditions.replace(" or ", " | ")
+                    conditions = re.sub(r'is\s+([^\s]+)', r'== "\1"', conditions)
+                    conditions = re.sub(r'equals\s+([^\s]+)', r'== "\1"', conditions)
+                    conditions = re.sub(r'not equal to\s+([^\s]+)', r'!= "\1"', conditions)
+                    conditions = re.sub(r'greater than\s+([^\s]+)', r'> \1', conditions)
+                    conditions = re.sub(r'less than\s+([^\s]+)', r'< \1', conditions)
+                    # Handle column names
+                    for col in df_columns:
+                        conditions = re.sub(r'\b{}\b'.format(col.lower()), f'`{col}`', conditions)
+                    return conditions
+                else:
+                    return ''
 
-            sql_query = nlp_to_sql(user_query, df.columns)
-            st.write(f"Generated SQL Query: `{sql_query}`")
-            result = ps.sqldf(sql_query, locals())
+            pandas_query = nlp_to_pandas_query(user_query, df.columns)
+            if pandas_query:
+                st.write(f"Generated pandas query: `{pandas_query}`")
+                result = df.query(pandas_query)
+            else:
+                st.write("No conditions found in the query. Displaying all data.")
+                result = df.copy()
             st.write(result)
         except Exception as e:
             st.error(f"An error occurred while processing the query: {e}")
@@ -623,6 +636,7 @@ def page8_nlp_query():
     if st.button("Next", key=f"next_{st.session_state.current_page}"):
         st.session_state.current_page = 'Real-Time Data'
         st.session_state.dummy_var += 1
+
 
 def page9_real_time_data():
     st.title("Step 9: Real-Time Data Updates")
